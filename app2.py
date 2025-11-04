@@ -34,7 +34,7 @@ SHEET_WRITE_SPLIT = 5000
 UK_TZ = ZoneInfo("Europe/London")
 
 # ✅ Toggle UK time restriction ON/OFF
-USE_UK_TIME_WINDOW = False  # True = Only run 11:00–12:00 UK | False = Run anytime once/day
+USE_UK_TIME_WINDOW = True  # True = Only run 11:00–12:00 UK | False = Run anytime once/day
 
 # === GOOGLE SHEETS SETUP ===
 creds = Credentials.from_service_account_file(
@@ -311,8 +311,8 @@ def scheduler_loop():
             now_uk = datetime.now(UK_TZ)
             today_str = now_uk.strftime("%Y-%m-%d")
 
-            # hourly unsubscribe check
-            if not is_sending and (now_uk - last_unsub_check).total_seconds() >= 3600:
+            # Every 4 hour unsubscribe check
+            if not is_sending and (now_uk - last_unsub_check).total_seconds() >= 14400:
                 unsubscribed_set = fetch_unsubscribed()
                 if unsubscribed_set:
                     mark_unsubscribed_in_sheet(unsubscribed_set)
