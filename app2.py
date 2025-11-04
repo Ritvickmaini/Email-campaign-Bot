@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.oauth2.service_account import Credentials
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.utils import formataddr
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import urllib.parse
@@ -17,10 +18,10 @@ SHEET_ID = "1Mm-v9NE1rycySiQaKG3Lr2heRcEtlc1XQbuCrOOqT8I"
 LEADS_TAB = "Email-campaigns"
 TEMPLATES_TAB = "Templates"
 
-SMTP_SERVER = "mail.southamptionbusinessshow.com"
+SMTP_SERVER = "mail.southamptonbusinessexpo.com"
 SMTP_PORT = 587
-IMAP_SERVER = "mail.southamptionbusinessshow.com"
-SENDER_EMAIL = "mike@southamptionbusinessshow.com"
+IMAP_SERVER = "mail.southamptonbusinessexpo.com"
+SENDER_EMAIL = "mike@southamptonbusinessexpo.com"
 SENDER_PASSWORD = "Geecon0404"
 
 UNSUBSCRIBE_API = "https://unsubscribe-uofn.onrender.com/get_unsubscribes"
@@ -97,7 +98,7 @@ def save_to_sent_folder(raw_msg):
 def send_email(recipient, first_name, subject, html_body):
     """Send personalized email and save to Sent folder"""
     msg = MIMEMultipart("alternative")
-    msg["From"] = SENDER_EMAIL
+    msg["From"] = formataddr(("Mike Randell", SENDER_EMAIL))
     msg["To"] = recipient
     msg["Subject"] = subject
 
