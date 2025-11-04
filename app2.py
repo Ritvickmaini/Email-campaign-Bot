@@ -18,7 +18,7 @@ SHEET_ID = "1Mm-v9NE1rycySiQaKG3Lr2heRcEtlc1XQbuCrOOqT8I"
 LEADS_TAB = "Email-campaigns"
 TEMPLATES_TAB = "Templates"
 # === FEATURE TOGGLE ===
-USE_UK_TIME_WINDOW = True  # 🔄 Set to False to send instantly (ignore UK time restriction)
+USE_UK_TIME_WINDOW = False # 🔄 Set to False to send instantly (ignore UK time restriction)
 
 
 SMTP_SERVER = "mail.southamptonbusinessexpo.com"
