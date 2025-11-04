@@ -170,35 +170,50 @@ def send_email(recipient, first_name, subject, html_body):
 
 
 def send_to_lead(row, i, templates_data, unsubscribed_set):
-    """Send one email in sequence"""
-    row_lower = {k.strip().lower(): v for k, v in row.items()}
-    email = (row_lower.get("email") or "").strip().lower()
-    first_name = (row_lower.get("first_name") or "").strip()
-    status = (row_lower.get("status") or "").strip()
-    count = int(row_lower.get("followup_count") or 0)
+    """Process and send email for a single lead safely."""
+    try:
+        # === Utility helpers ===
+        def safe_str(value):
+            return str(value).strip() if value is not None else ""
 
-    if not email or status.lower() == "unsubscribed":
-        return (i, None, None, None, f"⏭️ Skipped {email}")
-    if email in unsubscribed_set:
-        return (i, "Unsubscribed", None, None, f"🚫 {email} unsubscribed")
+        def safe_int(value):
+            try:
+                if isinstance(value, (int, float)):
+                    return int(value)
+                return int(str(value).strip() or 0)
+            except Exception:
+                return 0
 
-    next_num = count + 1
-    template_row = next((t for t in templates_data if str(t.get("Template")) == str(next_num)), None)
-    if not template_row:
-        return (i, None, None, None, f"⚠️ Template {next_num} not found")
+        # === Normalize row keys ===
+        row_lower = {str(k).strip().lower(): v for k, v in row.items()}
 
-    subject = (template_row.get("Subject Line") or f"Update {next_num}").strip()
-    body = (template_row.get("HTML Body") or "").strip()
-    sent_ok = send_email(email, first_name, subject, body)
+        # === Safely extract values ===
+        email = safe_str(row_lower.get("email")).lower()
+        first_name = safe_str(row_lower.get("first_name"))
+        status = safe_str(row_lower.get("status"))
+        count = safe_int(row_lower.get("followup_count"))
+        last_followup = safe_str(row_lower.get("last-followup-date"))
+        reply_status = safe_str(row_lower.get("reply status"))
 
-    time.sleep(2)
-    now_str = datetime.now(UK_TZ).strftime("%Y-%m-%d %H:%M:%S")
+        # === Skip invalid or unsubscribed ===
+        if not email or email in unsubscribed_set:
+            return (i, email, None, None, "⏭️ Skipped (Invalid or Unsubscribed)")
 
-    if sent_ok:
-        return (i, f"Email Sent - {next_num}", now_str, str(next_num), f"✅ Sent {email}")
-    else:
-        return (i, "Not Delivered", now_str, str(next_num), f"❌ Failed {email}")
+        # === Get follow-up template ===
+        body, subject = templates_data.get(count + 1, (None, None))
+        if not body or not subject:
+            return (i, email, None, None, "⏭️ No template found")
 
+        # === Send the email ===
+        send_email(email, first_name, subject, body)
+
+        # === Return update info ===
+        now_str = datetime.now(ZoneInfo("Europe/London")).strftime("%Y-%m-%d %H:%M:%S")
+        return (i, email, now_str, count + 1, "✅ Email Sent")
+
+    except Exception as e:
+        print(f"⚠️ Data error in row {i}: {e} | Row data: {row}", flush=True)
+        return (i, None, None, None, f"⚠️ Skipped due to error: {e}")
 
 def send_batch(leads_batch, start_index, templates_data, unsubscribed_set):
     """Send a single 10k batch"""
