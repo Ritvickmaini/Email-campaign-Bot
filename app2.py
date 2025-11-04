@@ -17,6 +17,9 @@ SERVICE_ACCOUNT_FILE = "/etc/secrets/credentials.json"
 SHEET_ID = "1Mm-v9NE1rycySiQaKG3Lr2heRcEtlc1XQbuCrOOqT8I"
 LEADS_TAB = "Email-campaigns"
 TEMPLATES_TAB = "Templates"
+# === FEATURE TOGGLE ===
+USE_UK_TIME_WINDOW = True  # 🔄 Set to False to send instantly (ignore UK time restriction)
+
 
 SMTP_SERVER = "mail.southamptonbusinessexpo.com"
 SMTP_PORT = 587
@@ -61,20 +64,53 @@ def fetch_unsubscribed():
 
 
 def mark_unsubscribed_in_sheet(unsubscribed_set):
-    """Mark unsubscribed users in Google Sheet"""
+    """Mark unsubscribed users by exact email or domain (excluding gmail/outlook/yahoo)"""
     try:
+        # Extract domains from unsubscribed emails
+        unsubscribed_domains = {
+            email.split("@")[1].lower().strip()
+            for email in unsubscribed_set
+            if "@" in email
+        }
+
+        skip_domains = {"gmail.com", "outlook.com", "yahoo.com", "hotmail.com", "live.com"}
+
         all_emails = leads_sheet.col_values(2)
         updates = []
+        marked_exact = 0
+        marked_domain = 0
+
         for i, email in enumerate(all_emails[1:], start=2):
-            if email.strip().lower() in unsubscribed_set:
-                updates.append({'range': f"C{i}", 'values': [["Unsubscribed"]]})
+            email = (email or "").strip().lower()
+            if not email or "@" not in email:
+                continue
+
+            domain = email.split("@")[1]
+
+            # === Rule 1: Exact email match ===
+            if email in unsubscribed_set:
+                updates.append({"range": f"C{i}", "values": [["Unsubscribed"]]})
+                marked_exact += 1
+                continue
+
+            # === Rule 2: Domain match (only if not a free provider) ===
+            if (
+                domain not in skip_domains
+                and domain in unsubscribed_domains
+            ):
+                updates.append({"range": f"C{i}", "values": [["Unsubscribed"]]})
+                marked_domain += 1
+
+        # === Apply updates ===
         if updates:
-            leads_sheet.batch_update([{"range": u['range'], "values": u['values']} for u in updates])
-            print(f"🚫 Marked {len(updates)} unsubscribed users.", flush=True)
+            leads_sheet.batch_update(updates)
+            print(f"🚫 Marked {len(updates)} unsubscribed users — {marked_exact} exact, {marked_domain} by domain.", flush=True)
         else:
             print("✅ No new unsubscribes to mark.", flush=True)
+
     except Exception as e:
         print(f"❌ Failed to mark unsubscribed users: {e}", flush=True)
+
 
 
 def save_to_sent_folder(raw_msg):
@@ -274,43 +310,53 @@ def run_campaign():
 
 
 def scheduler_loop():
-    """Main scheduler loop"""
+    """Main scheduler loop with optional UK time restriction"""
     global is_sending
     last_sent_date = None
     last_unsub_check = datetime.now(UK_TZ) - timedelta(hours=2)
 
-    print("🕒 Scheduler started (checks every 10 min)...", flush=True)
+    print(f"🕒 Scheduler started (checks every 10 min)...", flush=True)
+    print(f"⏳ UK Time Restriction: {'ON (11:00–12:00 UK only)' if USE_UK_TIME_WINDOW else 'OFF (Send instantly)'}", flush=True)
 
     while True:
         try:
             now_uk = datetime.now(UK_TZ)
             today_str = now_uk.strftime("%Y-%m-%d")
 
+            # === Unsubscribe check every hour ===
             if not is_sending and (now_uk - last_unsub_check).total_seconds() >= 3600:
                 unsubscribed_set = fetch_unsubscribed()
                 if unsubscribed_set:
                     mark_unsubscribed_in_sheet(unsubscribed_set)
                 last_unsub_check = now_uk
 
-            campaign_start = now_uk.replace(hour=11, minute=0, second=0, microsecond=0)
-            campaign_end = now_uk.replace(hour=12, minute=0, second=0, microsecond=0)
+            # === Campaign control ===
+            if USE_UK_TIME_WINDOW:
+                campaign_start = now_uk.replace(hour=11, minute=0, second=0, microsecond=0)
+                campaign_end = now_uk.replace(hour=12, minute=0, second=0, microsecond=0)
 
-            if (
-                last_sent_date != today_str
-                and campaign_start <= now_uk < campaign_end
-            ):
-                print(f"⏰ Time window matched ({now_uk.strftime('%H:%M')} UK) — starting campaign.", flush=True)
-                run_campaign()
-                last_sent_date = today_str
+                if (
+                    last_sent_date != today_str
+                    and campaign_start <= now_uk < campaign_end
+                ):
+                    print(f"⏰ Time window matched ({now_uk.strftime('%H:%M')} UK) — starting campaign.", flush=True)
+                    run_campaign()
+                    last_sent_date = today_str
+                else:
+                    print(f"🕓 Current time: {now_uk.strftime('%H:%M')} UK — waiting for 11:00 UK window...", flush=True)
             else:
-                print(f"🕓 Current time: {now_uk.strftime('%H:%M')} UK — waiting...", flush=True)
+                if not is_sending:
+                    print("🚀 Instant send mode enabled — starting campaign immediately.", flush=True)
+                    run_campaign()
+                    last_sent_date = today_str
+                else:
+                    print("⏳ Campaign already running...", flush=True)
 
             time.sleep(600)
 
         except Exception as e:
             print(f"⚠️ Scheduler error: {e}", flush=True)
             time.sleep(600)
-
 
 # === ENTRY POINT ===
 if __name__ == "__main__":
