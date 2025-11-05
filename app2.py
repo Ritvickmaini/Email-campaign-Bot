@@ -34,7 +34,7 @@ SHEET_WRITE_SPLIT = 5000
 UK_TZ = ZoneInfo("Europe/London")
 
 # ✅ Toggle UK time restriction ON/OFF
-USE_UK_TIME_WINDOW = True  # True = Only run 11:00–12:00 UK | False = Run anytime once/day
+USE_UK_TIME_WINDOW = False  # True = Only run 11:00–12:00 UK | False = Run anytime once/day
 
 # === GOOGLE SHEETS SETUP ===
 creds = Credentials.from_service_account_file(
@@ -47,7 +47,6 @@ templates_sheet = gc.open_by_key(SHEET_ID).worksheet(TEMPLATES_TAB)
 
 # === GLOBAL FLAG ===
 is_sending = False  # ensures unsubscribe check pauses while sending
-
 
 # === UTILS ===
 def fetch_unsubscribed():
@@ -91,7 +90,8 @@ def mark_unsubscribed_in_sheet(unsubscribed_set):
 
             # Exact match unsubscribe
             if email in unsubscribed_set:
-                if current_statuses[i - 1].strip().lower() != "unsubscribed":
+                cell_status = str(current_statuses[i - 1] or "").strip().lower()
+                if cell_status != "unsubscribed":
                     updates.append({"range": f"C{i}", "values": [["Unsubscribed"]]})
                     marked_exact += 1
                 continue
@@ -103,7 +103,8 @@ def mark_unsubscribed_in_sheet(unsubscribed_set):
                 and domain not in processed_domains
             ):
                 # Mark only one email per unsubscribed domain
-                if current_statuses[i - 1].strip().lower() != "unsubscribed":
+                cell_status = str(current_statuses[i - 1] or "").strip().lower()
+                if cell_status != "unsubscribed":
                     updates.append({"range": f"C{i}", "values": [["Unsubscribed"]]})
                     marked_domain += 1
                     processed_domains.add(domain)
@@ -212,9 +213,9 @@ def send_email(recipient, first_name, subject, html_body):
 def send_to_lead(row, i, templates_data, unsubscribed_set):
     """Send one email in sequence"""
     row_lower = {k.strip().lower(): v for k, v in row.items()}
-    email = (row_lower.get("email") or "").strip().lower()
-    first_name = (row_lower.get("first_name") or "").strip()
-    status = (row_lower.get("status") or "").strip()
+    email = str(row_lower.get("email") or "").strip().lower()
+    first_name = str(row_lower.get("first_name") or "").strip()
+    status = str(row_lower.get("status") or "").strip()
     count = int(row_lower.get("followup_count") or 0)
 
     if not email or status.lower() == "unsubscribed":
