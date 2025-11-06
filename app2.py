@@ -61,57 +61,30 @@ def fetch_unsubscribed():
         print(f"❌ Failed to fetch unsubscribed list: {e}", flush=True)
         return set()
 
-
 def mark_unsubscribed_in_sheet(unsubscribed_set):
-    """Mark unsubscribed users by exact email or domain (one per domain, excluding gmail/outlook/yahoo)."""
+    """Mark unsubscribed users by exact email only."""
     try:
-        unsubscribed_domains = {
-            email.split("@")[1].lower().strip()
-            for email in unsubscribed_set
-            if "@" in email
-        }
+        all_emails = leads_sheet.col_values(2)      # column B = Emails
+        current_statuses = leads_sheet.col_values(3)  # column C = Status
 
-        skip_domains = {"gmail.com", "outlook.com", "yahoo.com", "hotmail.com", "live.com"}
-
-        all_emails = leads_sheet.col_values(2)
-        current_statuses = leads_sheet.col_values(3)  # Assuming column C has status like 'Unsubscribed'
         updates = []
         marked_exact = 0
-        marked_domain = 0
 
-        processed_domains = set()  # to track domains already handled in this run
-
-        for i, email in enumerate(all_emails[1:], start=2):
+        for i, email in enumerate(all_emails[1:], start=2):  # skip header
             email = (email or "").strip().lower()
-            if not email or "@" not in email:
+            if not email: 
                 continue
 
-            domain = email.split("@")[1]
-
-            # Exact match unsubscribe
+            # exact unsubscribe only
             if email in unsubscribed_set:
                 cell_status = str(current_statuses[i - 1] or "").strip().lower()
                 if cell_status != "unsubscribed":
                     updates.append({"range": f"C{i}", "values": [["Unsubscribed"]]})
                     marked_exact += 1
-                continue
-
-            # Domain-based unsubscribe (only one per domain)
-            if (
-                domain not in skip_domains
-                and domain in unsubscribed_domains
-                and domain not in processed_domains
-            ):
-                # Mark only one email per unsubscribed domain
-                cell_status = str(current_statuses[i - 1] or "").strip().lower()
-                if cell_status != "unsubscribed":
-                    updates.append({"range": f"C{i}", "values": [["Unsubscribed"]]})
-                    marked_domain += 1
-                    processed_domains.add(domain)
 
         if updates:
             leads_sheet.batch_update(updates)
-            print(f"🚫 Marked {len(updates)} unsubscribed users — {marked_exact} exact, {marked_domain} by domain.", flush=True)
+            print(f"🚫 Marked {marked_exact} unsubscribed users (exact match only).", flush=True)
         else:
             print("✅ No new unsubscribes to mark.", flush=True)
 
@@ -312,8 +285,8 @@ def scheduler_loop():
             now_uk = datetime.now(UK_TZ)
             today_str = now_uk.strftime("%Y-%m-%d")
 
-            # Every 4 hour unsubscribe check
-            if not is_sending and (now_uk - last_unsub_check).total_seconds() >= 14400:
+            # Every 15 min unsubscribe check
+            if not is_sending and (now_uk - last_unsub_check).total_seconds() >= 900:
                 unsubscribed_set = fetch_unsubscribed()
                 if unsubscribed_set:
                     mark_unsubscribed_in_sheet(unsubscribed_set)
