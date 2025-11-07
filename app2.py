@@ -77,7 +77,7 @@ def mark_unsubscribed_in_sheet(unsubscribed_set):
 
             # exact unsubscribe only
             if email in unsubscribed_set:
-                cell_status = str(current_statuses[i - 1] or "").strip().lower()
+                cell_status = str(current_statuses[i-1] if (i-1) < len(current_statuses) else "").strip().lower()
                 if cell_status != "unsubscribed":
                     updates.append({"range": f"C{i}", "values": [["Unsubscribed"]]})
                     marked_exact += 1
