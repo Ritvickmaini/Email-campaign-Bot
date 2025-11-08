@@ -34,7 +34,7 @@ SHEET_WRITE_SPLIT = 5000
 UK_TZ = ZoneInfo("Europe/London")
 
 # ✅ Toggle UK time restriction ON/OFF
-USE_UK_TIME_WINDOW = True  # True = Only run 11:00–12:00 UK | False = Run anytime once/day
+USE_UK_TIME_WINDOW = False  # True = Only run 11:00–12:00 UK | False = Run anytime once/day
 
 # === GOOGLE SHEETS SETUP ===
 creds = Credentials.from_service_account_file(
@@ -189,7 +189,16 @@ def send_to_lead(row, i, templates_data, unsubscribed_set):
     email = str(row_lower.get("email") or "").strip().lower()
     first_name = str(row_lower.get("first_name") or "").strip()
     status = str(row_lower.get("status") or "").strip()
-    count = int(row_lower.get("followup_count") or 0)
+
+    raw_count = row_lower.get("followup_count")
+    try:
+        if raw_count is None:
+            count = 0
+        else:
+            raw_count = str(raw_count).strip()
+            count = int(raw_count) if raw_count.isdigit() else 0
+    except:
+        count = 0
 
     if not email or status.lower() == "unsubscribed":
         return (i, None, None, None, f"⏭️ Skipped {email}")
@@ -212,7 +221,6 @@ def send_to_lead(row, i, templates_data, unsubscribed_set):
         return (i, f"Email Sent - {next_num}", now_str, str(next_num), f"✅ Sent {email}")
     else:
         return (i, "Not Delivered", now_str, str(next_num), f"❌ Failed {email}")
-
 
 def send_batch(leads_batch, start_index, templates_data, unsubscribed_set):
     """Send a single 10k batch"""
