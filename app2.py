@@ -34,7 +34,7 @@ SHEET_WRITE_SPLIT = 5000
 UK_TZ = ZoneInfo("Europe/London")
 
 # ✅ Toggle UK time restriction ON/OFF
-USE_UK_TIME_WINDOW = False  # True = Only run 11:00–12:00 UK | False = Run anytime once/day
+USE_UK_TIME_WINDOW = True  # True = Only run 11:00–12:00 UK | False = Run anytime once/day
 
 # === GOOGLE SHEETS SETUP ===
 creds = Credentials.from_service_account_file(
