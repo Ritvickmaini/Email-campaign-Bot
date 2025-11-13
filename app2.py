@@ -34,7 +34,7 @@ SHEET_WRITE_SPLIT = 5000
 UK_TZ = ZoneInfo("Europe/London")
 
 # ✅ Toggle UK time restriction ON/OFF
-USE_UK_TIME_WINDOW = True  # True = Only run 11:00–12:00 UK | False = Run anytime once/day
+USE_UK_TIME_WINDOW = True  # True = Only run 8:00–9:00 UK | False = Run anytime once/day
 
 # === GOOGLE SHEETS SETUP ===
 creds = Credentials.from_service_account_file(
@@ -301,8 +301,8 @@ def scheduler_loop():
                 last_unsub_check = now_uk
 
             # UK time window (11:00–12:00 UK)
-            campaign_start = now_uk.replace(hour=11, minute=0, second=0, microsecond=0)
-            campaign_end = now_uk.replace(hour=12, minute=0, second=0, microsecond=0)
+            campaign_start = now_uk.replace(hour=8, minute=0, second=0, microsecond=0)
+            campaign_end = now_uk.replace(hour=9, minute=0, second=0, microsecond=0)
 
             should_run = False
             if USE_UK_TIME_WINDOW:
