@@ -118,79 +118,77 @@ def looks_like_bot(local):
     return False
 
 def mark_unsubscribed_in_sheet(unsubscribed_set):
-    """Smart unsubscribe: exact matches + detect bot emails."""
+    """Ultra-optimized unsubscribe processor — O(N) memory safe."""
     try:
         global last_unsub_write
         now = time.time()
 
-        # Run at most once every 10 minutes
         if now - last_unsub_write < 600:
             print("⏳ Skipping unsubscribe check (limit: 1 per 10 min)", flush=True)
             return
 
         last_unsub_write = now
 
+        # Load sheet
         all_rows = leads_sheet.get_all_values()
         headers = all_rows[0]
-
         email_idx = headers.index("Email") + 1
+
+        # Build sheet lookup
+        sheet_rows = {
+            (i + 1): (row[email_idx - 1] or "").strip().lower()
+            for i, row in enumerate(all_rows[1:], start=2)
+        }
+
+        # Pre-calc bot rules for unsub emails
+        unsub_exact = set()
+        unsub_bot_locals = set()
+
+        for unsub in unsubscribed_set:
+            unsub = unsub.lower().strip()
+            if "@" not in unsub:
+                continue
+
+            local, _ = unsub.split("@", 1)
+
+            # exact match category
+            unsub_exact.add(unsub)
+
+            # bot category
+            if looks_like_bot(local):
+                unsub_bot_locals.add(local)
 
         updates = []
         marked_exact = 0
         marked_bot = 0
 
-        sheet_emails = [
-            (i + 1, (row[email_idx - 1] or "").strip().lower())
-            for i, row in enumerate(all_rows[1:], start=2)
-        ]
-
-        for unsub in unsubscribed_set:
-            unsub = unsub.lower().strip()
-
-            if "@" not in unsub:
+        # Scan sheet ONLY ONCE (O(N))
+        for row_num, sheet_email in sheet_rows.items():
+            if not sheet_email:
                 continue
 
-            local, domain = unsub.split("@", 1)
+            local = sheet_email.split("@")[0]
 
-            # 1️⃣ EXACT MATCH
-            exact_found = False
-            for row_num, email in sheet_emails:
-                if email == unsub:
-                    updates.append({"range": f"C{row_num}", "values": [["Unsubscribed"]]})
-                    marked_exact += 1
-                    exact_found = True
-                    break
-
-            if exact_found:
-                continue  # exact match handled
-
-            # 2️⃣ BOT PATTERN MATCH
-            if looks_like_bot(local):
-
-                for row_num, email in sheet_emails:
-                    sheet_local = email.split("@")[0]
-
-                    # Only mark THIS specific email, NOT the domain
-                    if email == unsub or looks_like_bot(sheet_local):
-                        updates.append({"range": f"C{row_num}", "values": [["Bot-Unsubscribe"]]})
-                        marked_bot += 1
+            # Exact match
+            if sheet_email in unsub_exact:
+                updates.append({"range": f"C{row_num}", "values": [["Unsubscribed"]]})
+                marked_exact += 1
                 continue
 
-            # 3️⃣ If not bot → ignore
+            # Bot local-part match
+            if local in unsub_bot_locals:
+                updates.append({"range": f"C{row_num}", "values": [["Bot-Unsubscribe"]]})
+                marked_bot += 1
 
-        # Apply writes
         if updates:
             leads_sheet.batch_update(updates)
-            print(
-                f"🚫 Marked {marked_exact} exact unsubscribes, "
-                f"and {marked_bot} bot unsubscribes.",
-                flush=True
-            )
+            print(f"🚫 Marked {marked_exact} exact unsubscribes, {marked_bot} bot unsubscribes.", flush=True)
         else:
-            print("✅ No new unsubscribes to process.", flush=True)
+            print("✅ No new unsubscribes found.", flush=True)
 
     except Exception as e:
         print(f"❌ Failed to process unsubscribes: {e}", flush=True)
+
 
 def save_to_sent_folder(raw_msg):
     """Save sent email to the correct IMAP Sent folder (INBOX.Sent)"""
