@@ -69,7 +69,7 @@ PUBLIC_DOMAINS = {
 }
 
 def mark_unsubscribed_in_sheet(unsubscribed_set):
-    """Mark unsubscribed users and remove business-domain rows if domain match (batched)."""
+    """Mark unsubscribed users and mark business-domain rows as unsubscribed (no delete)."""
     try:
         global last_unsub_write
         now = time.time()
@@ -87,10 +87,9 @@ def mark_unsubscribed_in_sheet(unsubscribed_set):
         email_idx = headers.index("Email") + 1
         status_idx = headers.index("Status") + 1
 
-        rows_to_delete = []
         updates = []
         marked_exact = 0
-        domain_deleted = 0
+        marked_domain = 0
 
         # Pre-build list of all sheet emails
         sheet_emails_lower = [
@@ -113,49 +112,31 @@ def mark_unsubscribed_in_sheet(unsubscribed_set):
                     break
 
             if exact_found:
-                continue  # no domain match if exact found
+                continue
 
-            # ===== DOMAIN MATCH CHECK =====
+            # ===== DOMAIN MATCH (business domains only) =====
             if unsub_domain in PUBLIC_DOMAINS:
-                continue  # public domains never use domain delete
+                continue  # skip marking by domain for public domains
 
-            # Delete all rows matching this domain
+            # Mark all rows with the same domain
             for row_num, email in sheet_emails_lower:
                 if email.endswith("@" + unsub_domain):
-                    rows_to_delete.append(row_num)
-                    domain_deleted += 1
+                    updates.append({"range": f"C{row_num}", "values": [["Unsubscribed"]]})
+                    marked_domain += 1
 
-        # ===== APPLY STATUS UPDATES =====
+        # ===== APPLY ALL MARKINGS IN ONE BATCH =====
         if updates:
             leads_sheet.batch_update(updates)
-            print(f"🚫 Marked {marked_exact} exact unsubscribed emails.", flush=True)
-
-        # ===== APPLY DOMAIN DELETIONS IN BATCH =====
-        if domain_deleted > 0:
-            unique_rows = sorted(set(rows_to_delete))  # ascending
-
-            delete_requests = []
-            for row_num in unique_rows:
-                delete_requests.append({
-                    "deleteDimension": {
-                        "range": {
-                            "sheetId": leads_sheet.id,
-                            "dimension": "ROWS",
-                            "startIndex": row_num - 1,
-                            "endIndex": row_num
-                        }
-                    }
-                })
-
-            leads_sheet.spreadsheet.batch_update({"requests": delete_requests})
-            print(f"🗑️ Deleted {domain_deleted} domain-level unsubscribed leads (batched).", flush=True)
-
-        if not updates and domain_deleted == 0:
+            print(
+                f"🚫 Marked {marked_exact} exact unsubscribes, "
+                f"and {marked_domain} domain-level unsubscribes.",
+                flush=True
+            )
+        else:
             print("✅ No new unsubscribes to process.", flush=True)
 
     except Exception as e:
         print(f"❌ Failed to process unsubscribes: {e}", flush=True)
-
 
 def save_to_sent_folder(raw_msg):
     """Save sent email to the correct IMAP Sent folder (INBOX.Sent)"""
