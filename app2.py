@@ -69,12 +69,12 @@ PUBLIC_DOMAINS = {
 }
 
 def mark_unsubscribed_in_sheet(unsubscribed_set):
-    """Mark unsubscribed users and mark business-domain rows as unsubscribed (no delete)."""
+    """Mark unsubscribed users. Domain-level unsub only for numeric local-parts."""
     try:
         global last_unsub_write
         now = time.time()
 
-        # Limit: run at most once every 10 minutes
+        # Only run every 10 minutes
         if now - last_unsub_write < 600:
             print("⏳ Skipping unsubscribe check (limit: 1 per 10 min)", flush=True)
             return
@@ -85,24 +85,27 @@ def mark_unsubscribed_in_sheet(unsubscribed_set):
         headers = all_rows[0]
 
         email_idx = headers.index("Email") + 1
-        status_idx = headers.index("Status") + 1
 
         updates = []
         marked_exact = 0
-        marked_domain = 0
+        marked_numeric_domain = 0
 
-        # Pre-build list of all sheet emails
+        # Build sheet emails
         sheet_emails_lower = [
             (i + 1, (row[email_idx - 1] or "").strip().lower())
             for i, row in enumerate(all_rows[1:], start=2)
         ]
 
-        # Process each unsubscribe email
         for unsub in unsubscribed_set:
             unsub = unsub.lower().strip()
-            unsub_domain = unsub.split("@")[-1]
+            if "@" not in unsub:
+                continue
 
-            # ===== EXACT MATCH CHECK =====
+            local, domain = unsub.split("@", 1)
+
+            # ======================
+            # 1️⃣ EXACT MATCH
+            # ======================
             exact_found = False
             for row_num, email in sheet_emails_lower:
                 if email == unsub:
@@ -110,26 +113,38 @@ def mark_unsubscribed_in_sheet(unsubscribed_set):
                     marked_exact += 1
                     exact_found = True
                     break
-
+            
             if exact_found:
                 continue
 
-            # ===== DOMAIN MATCH (business domains only) =====
-            if unsub_domain in PUBLIC_DOMAINS:
-                continue  # skip marking by domain for public domains
+            # ======================
+            # 2️⃣ NUMERIC LOCAL-PART DOMAIN UNSUBSCRIBE
+            #    ONLY if local part is numeric
+            # ======================
+            if not local.isdigit():
+                continue  # skip non-numeric domain unsubs
 
-            # Mark all rows with the same domain
+            # Skip public domains
+            if domain in PUBLIC_DOMAINS:
+                continue
+
+            # Unsubscribe ONLY emails from same domain AND numeric local-part
             for row_num, email in sheet_emails_lower:
-                if email.endswith("@" + unsub_domain):
-                    updates.append({"range": f"C{row_num}", "values": [["Unsubscribed"]]})
-                    marked_domain += 1
+                if email.endswith("@" + domain):
+                    local_part = email.split("@")[0]
 
-        # ===== APPLY ALL MARKINGS IN ONE BATCH =====
+                    if local_part.isdigit():  # ONLY numeric emails qualify
+                        updates.append({"range": f"C{row_num}", "values": [["Unsubscribed"]]})
+                        marked_numeric_domain += 1
+
+        # ======================
+        # BATCH WRITE
+        # ======================
         if updates:
             leads_sheet.batch_update(updates)
             print(
                 f"🚫 Marked {marked_exact} exact unsubscribes, "
-                f"and {marked_domain} domain-level unsubscribes.",
+                f"and {marked_numeric_domain} numeric-domain unsubscribes.",
                 flush=True
             )
         else:
