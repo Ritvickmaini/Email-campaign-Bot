@@ -61,35 +61,74 @@ def fetch_unsubscribed():
         print(f"❌ Failed to fetch unsubscribed list: {e}", flush=True)
         return set()
 
-def mark_unsubscribed_in_sheet(unsubscribed_set):
-    """Mark unsubscribed users by exact email only."""
-    try:
-        all_emails = leads_sheet.col_values(2)      # column B = Emails
-        current_statuses = leads_sheet.col_values(3)  # column C = Status
+PUBLIC_DOMAINS = {
+    "gmail.com", "googlemail.com", "yahoo.com", "outlook.com",
+    "hotmail.com", "live.com", "msn.com", "icloud.com", "me.com",
+    "aol.com", "proton.me", "zoho.com", "gmx.com", "ymail.com"
+}
 
+def mark_unsubscribed_in_sheet(unsubscribed_set):
+    """Mark unsubscribed users and remove business-domain rows if domain match."""
+    try:
+        all_rows = leads_sheet.get_all_values()
+        headers = all_rows[0]
+        email_idx = headers.index("Email") + 1
+        status_idx = headers.index("Status") + 1
+
+        rows_to_delete = []
         updates = []
         marked_exact = 0
+        domain_deleted = 0
 
-        for i, email in enumerate(all_emails[1:], start=2):  # skip header
-            email = (email or "").strip().lower()
-            if not email: 
-                continue
+        # Pre-build email list
+        sheet_emails_lower = [
+            (i + 1, (row[email_idx - 1] or "").strip().lower())
+            for i, row in enumerate(all_rows[1:], start=2)
+        ]
 
-            # exact unsubscribe only
-            if email in unsubscribed_set:
-                cell_status = str(current_statuses[i-1] if (i-1) < len(current_statuses) else "").strip().lower()
-                if cell_status != "unsubscribed":
-                    updates.append({"range": f"C{i}", "values": [["Unsubscribed"]]})
+        for unsub in unsubscribed_set:
+            unsub = unsub.lower().strip()
+            unsub_domain = unsub.split("@")[-1]
+
+            # -------- EXACT MATCH FIRST --------
+            exact_found = False
+            for row_num, email in sheet_emails_lower:
+                if email == unsub:
+                    updates.append({"range": f"C{row_num}", "values": [["Unsubscribed"]]})
                     marked_exact += 1
+                    exact_found = True
+                    break
 
+            if exact_found:
+                continue  # do NOT consider domain match if exact found
+
+            # -------- DOMAIN MATCH (BUSINESS DOMAINS ONLY) --------
+            if unsub_domain in PUBLIC_DOMAINS:
+                continue  # skip public domains completely
+
+            # Delete all rows with same domain
+            for row_num, email in sheet_emails_lower:
+                if email.endswith(f"@{unsub_domain}"):
+                    rows_to_delete.append(row_num)
+                    domain_deleted += 1
+
+        # ---------- APPLY UPDATES ----------
         if updates:
             leads_sheet.batch_update(updates)
-            print(f"🚫 Marked {marked_exact} unsubscribed users (exact match only).", flush=True)
-        else:
-            print("✅ No new unsubscribes to mark.", flush=True)
+            print(f"🚫 Marked {marked_exact} exact unsubscribed emails.", flush=True)
+
+        if domain_deleted > 0:
+            # Sort descending so row numbers don't shift during deletion
+            rows_to_delete = sorted(set(rows_to_delete), reverse=True)
+            for r in rows_to_delete:
+                leads_sheet.delete_rows(r)
+            print(f"🗑️ Deleted {domain_deleted} domain-level unsubscribed leads.", flush=True)
+
+        if not updates and domain_deleted == 0:
+            print("✅ No new unsubscribes to process.", flush=True)
 
     except Exception as e:
-        print(f"❌ Failed to mark unsubscribed users: {e}", flush=True)
+        print(f"❌ Failed to process unsubscribes: {e}", flush=True)
 
 def save_to_sent_folder(raw_msg):
     """Save sent email to the correct IMAP Sent folder (INBOX.Sent)"""
@@ -272,6 +311,11 @@ def run_campaign():
         write_to_sheet(results[:half])
         print("💾 Writing second half...", flush=True)
         write_to_sheet(results[half:])
+
+        print("🔄 Running unsubscribe check before 30-minute wait...", flush=True)
+        unsub_set_after_batch = fetch_unsubscribed()
+        if unsub_set_after_batch:
+           mark_unsubscribed_in_sheet(unsub_set_after_batch)
 
         print("✅ Batch complete. Sleeping 30 minutes before next batch...", flush=True)
         time.sleep(1800)
