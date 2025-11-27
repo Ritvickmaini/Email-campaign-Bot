@@ -11,6 +11,9 @@ from email.utils import formataddr
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import urllib.parse
+import codecs
+import math
+import re
 
 # === CONFIGURATION ===
 SERVICE_ACCOUNT_FILE = "/etc/secrets/credentials.json"
@@ -67,14 +70,60 @@ PUBLIC_DOMAINS = {
     "hotmail.com", "live.com", "msn.com", "icloud.com", "me.com",
     "aol.com", "proton.me", "zoho.com", "gmx.com", "ymail.com"
 }
+def is_rot13_like(s):
+    """Detect if string looks ROT13-encoded."""
+    try:
+        rot = codecs.decode(s, "rot_13")
+        # ROT13 outputs different gibberish if input is gibberish
+        return (rot != s) and bool(re.fullmatch(r"[A-Za-z._\-]+", rot))
+    except:
+        return False
+
+def gibberish_score(s):
+    """Calculate a randomness score to detect gibberish emails."""
+    if not s:
+        return 0
+
+    # Consonant streak (example: 'bcdfgh')
+    cons_streak = len(re.findall(r"[bcdfghjklmnpqrstvwxyz]{4,}", s.lower()))
+
+    # Rare characters
+    rare_letters = len([c for c in s.lower() if c in "qxzvjk"])
+
+    # Entropy measure (random = high entropy)
+    probs = [s.lower().count(c) / len(s) for c in set(s.lower())]
+    entropy = -sum(p * math.log(p, 2) for p in probs)
+
+    return cons_streak + rare_letters + entropy
+
+def looks_like_bot(local):
+    """Return True if the local-part is bot-generated."""
+    local = local.lower()
+
+    if local.isdigit():
+        return True  # numeric fake email
+
+    if len(local) <= 2:
+        return False  # too short to be bot
+
+    if is_rot13_like(local):
+        return True  # ROT13 pattern
+
+    if gibberish_score(local) > 12:
+        return True  # random, high-entropy garbage
+
+    if len(local) > 6 and not re.search(r"[aeiou]", local):
+        return True  # long string, no vowels = bot
+
+    return False
 
 def mark_unsubscribed_in_sheet(unsubscribed_set):
-    """Mark unsubscribed users. Domain-level unsub only for numeric local-parts."""
+    """Smart unsubscribe: exact matches + detect bot emails."""
     try:
         global last_unsub_write
         now = time.time()
 
-        # Only run every 10 minutes
+        # Run at most once every 10 minutes
         if now - last_unsub_write < 600:
             print("⏳ Skipping unsubscribe check (limit: 1 per 10 min)", flush=True)
             return
@@ -88,63 +137,53 @@ def mark_unsubscribed_in_sheet(unsubscribed_set):
 
         updates = []
         marked_exact = 0
-        marked_numeric_domain = 0
+        marked_bot = 0
 
-        # Build sheet emails
-        sheet_emails_lower = [
+        sheet_emails = [
             (i + 1, (row[email_idx - 1] or "").strip().lower())
             for i, row in enumerate(all_rows[1:], start=2)
         ]
 
         for unsub in unsubscribed_set:
             unsub = unsub.lower().strip()
+
             if "@" not in unsub:
                 continue
 
             local, domain = unsub.split("@", 1)
 
-            # ======================
             # 1️⃣ EXACT MATCH
-            # ======================
             exact_found = False
-            for row_num, email in sheet_emails_lower:
+            for row_num, email in sheet_emails:
                 if email == unsub:
                     updates.append({"range": f"C{row_num}", "values": [["Unsubscribed"]]})
                     marked_exact += 1
                     exact_found = True
                     break
-            
+
             if exact_found:
+                continue  # exact match handled
+
+            # 2️⃣ BOT PATTERN MATCH
+            if looks_like_bot(local):
+
+                for row_num, email in sheet_emails:
+                    sheet_local = email.split("@")[0]
+
+                    # Only mark THIS specific email, NOT the domain
+                    if email == unsub or looks_like_bot(sheet_local):
+                        updates.append({"range": f"C{row_num}", "values": [["Bot-Unsubscribe"]]})
+                        marked_bot += 1
                 continue
 
-            # ======================
-            # 2️⃣ NUMERIC LOCAL-PART DOMAIN UNSUBSCRIBE
-            #    ONLY if local part is numeric
-            # ======================
-            if not local.isdigit():
-                continue  # skip non-numeric domain unsubs
+            # 3️⃣ If not bot → ignore
 
-            # Skip public domains
-            if domain in PUBLIC_DOMAINS:
-                continue
-
-            # Unsubscribe ONLY emails from same domain AND numeric local-part
-            for row_num, email in sheet_emails_lower:
-                if email.endswith("@" + domain):
-                    local_part = email.split("@")[0]
-
-                    if local_part.isdigit():  # ONLY numeric emails qualify
-                        updates.append({"range": f"C{row_num}", "values": [["Unsubscribed"]]})
-                        marked_numeric_domain += 1
-
-        # ======================
-        # BATCH WRITE
-        # ======================
+        # Apply writes
         if updates:
             leads_sheet.batch_update(updates)
             print(
                 f"🚫 Marked {marked_exact} exact unsubscribes, "
-                f"and {marked_numeric_domain} numeric-domain unsubscribes.",
+                f"and {marked_bot} bot unsubscribes.",
                 flush=True
             )
         else:
