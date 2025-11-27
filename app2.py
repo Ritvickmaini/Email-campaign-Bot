@@ -11,9 +11,6 @@ from email.utils import formataddr
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import urllib.parse
-import codecs
-import math
-import re
 
 # === CONFIGURATION ===
 SERVICE_ACCOUNT_FILE = "/etc/secrets/credentials.json"
@@ -70,55 +67,8 @@ PUBLIC_DOMAINS = {
     "hotmail.com", "live.com", "msn.com", "icloud.com", "me.com",
     "aol.com", "proton.me", "zoho.com", "gmx.com", "ymail.com"
 }
-def is_rot13_like(s):
-    """Detect if string looks ROT13-encoded."""
-    try:
-        rot = codecs.decode(s, "rot_13")
-        # ROT13 outputs different gibberish if input is gibberish
-        return (rot != s) and bool(re.fullmatch(r"[A-Za-z._\-]+", rot))
-    except:
-        return False
-
-def gibberish_score(s):
-    """Calculate a randomness score to detect gibberish emails."""
-    if not s:
-        return 0
-
-    # Consonant streak (example: 'bcdfgh')
-    cons_streak = len(re.findall(r"[bcdfghjklmnpqrstvwxyz]{4,}", s.lower()))
-
-    # Rare characters
-    rare_letters = len([c for c in s.lower() if c in "qxzvjk"])
-
-    # Entropy measure (random = high entropy)
-    probs = [s.lower().count(c) / len(s) for c in set(s.lower())]
-    entropy = -sum(p * math.log(p, 2) for p in probs)
-
-    return cons_streak + rare_letters + entropy
-
-def looks_like_bot(local):
-    """Return True if the local-part is bot-generated."""
-    local = local.lower()
-
-    if local.isdigit():
-        return True  # numeric fake email
-
-    if len(local) <= 2:
-        return False  # too short to be bot
-
-    if is_rot13_like(local):
-        return True  # ROT13 pattern
-
-    if gibberish_score(local) > 12:
-        return True  # random, high-entropy garbage
-
-    if len(local) > 6 and not re.search(r"[aeiou]", local):
-        return True  # long string, no vowels = bot
-
-    return False
-
 def mark_unsubscribed_in_sheet(unsubscribed_set):
-    """Ultra-optimized unsubscribe processor — O(N) memory safe."""
+    """Mark ONLY exact unsubscribed emails. Bot logic removed completely."""
     try:
         global last_unsub_write
         now = time.time()
@@ -132,63 +82,33 @@ def mark_unsubscribed_in_sheet(unsubscribed_set):
         # Load sheet
         all_rows = leads_sheet.get_all_values()
         headers = all_rows[0]
+
+        if "Email" not in headers:
+            print("⚠️ 'Email' column not found in sheet headers.")
+            return
+
         email_idx = headers.index("Email") + 1
-
-        # Build sheet lookup
-        sheet_rows = {
-            (i + 1): (row[email_idx - 1] or "").strip().lower()
-            for i, row in enumerate(all_rows[1:], start=2)
-        }
-
-        # Pre-calc bot rules for unsub emails
-        unsub_exact = set()
-        unsub_bot_locals = set()
-
-        for unsub in unsubscribed_set:
-            unsub = unsub.lower().strip()
-            if "@" not in unsub:
-                continue
-
-            local, _ = unsub.split("@", 1)
-
-            # exact match category
-            unsub_exact.add(unsub)
-
-            # bot category
-            if looks_like_bot(local):
-                unsub_bot_locals.add(local)
 
         updates = []
         marked_exact = 0
-        marked_bot = 0
 
-        # Scan sheet ONLY ONCE (O(N))
-        for row_num, sheet_email in sheet_rows.items():
-            if not sheet_email:
-                continue
+        # Scan sheet rows
+        for i, row in enumerate(all_rows[1:], start=2):
+            sheet_email = (row[email_idx - 1] or "").strip().lower()
 
-            local = sheet_email.split("@")[0]
-
-            # Exact match
-            if sheet_email in unsub_exact:
-                updates.append({"range": f"C{row_num}", "values": [["Unsubscribed"]]})
+            if sheet_email and sheet_email in unsubscribed_set:
+                updates.append({"range": f"C{i}", "values": [["Unsubscribed"]]})
                 marked_exact += 1
-                continue
 
-            # Bot local-part match
-            if local in unsub_bot_locals:
-                updates.append({"range": f"C{row_num}", "values": [["Bot-Unsubscribe"]]})
-                marked_bot += 1
-
+        # Write results
         if updates:
             leads_sheet.batch_update(updates)
-            print(f"🚫 Marked {marked_exact} exact unsubscribes, {marked_bot} bot unsubscribes.", flush=True)
+            print(f"🚫 Marked {marked_exact} exact unsubscribes.", flush=True)
         else:
             print("✅ No new unsubscribes found.", flush=True)
 
     except Exception as e:
         print(f"❌ Failed to process unsubscribes: {e}", flush=True)
-
 
 def save_to_sent_folder(raw_msg):
     """Save sent email to the correct IMAP Sent folder (INBOX.Sent)"""
