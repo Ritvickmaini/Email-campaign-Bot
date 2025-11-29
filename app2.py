@@ -28,13 +28,13 @@ UNSUBSCRIBE_API = "https://unsubscribe-uofn.onrender.com/get_unsubscribes"
 TRACKING_BASE = "https://tracking-enfw.onrender.com"
 UNSUBSCRIBE_BASE = "https://unsubscribe-uofn.onrender.com"
 
-MAX_WORKERS = 20
+MAX_WORKERS = 15
 BATCH_SIZE = 10000
 SHEET_WRITE_SPLIT = 5000
 UK_TZ = ZoneInfo("Europe/London")
 
 # ✅ Toggle UK time restriction ON/OFF
-USE_UK_TIME_WINDOW = True  # True = Only run 8:00–9:00 UK | False = Run anytime once/day
+USE_UK_TIME_WINDOW = False  # True = Only run 8:00–9:00 UK | False = Run anytime once/day
 
 # === GOOGLE SHEETS SETUP ===
 creds = Credentials.from_service_account_file(
@@ -164,7 +164,7 @@ def send_email(recipient, first_name, subject, html_body):
         Best regards,<br>
         <strong>Mike Randell</strong><br>
         Marketing Executive | B2B Growth Expo<br>
-        <a href="mailto:mike@southamptionbusinessexpo.com" style="color:#000;text-decoration:none;">mike@southamptionbusinessexpo.com</a><br>
+        <a href="mailto:mike@southamptonbusinessexpo.com" style="color:#000;text-decoration:none;">mike@southamptonbusinessexpo.com</a><br>
         (+44) 2034517166
     </div>"""
 
@@ -233,7 +233,7 @@ def send_to_lead(row, i, templates_data, unsubscribed_set):
     body = (template_row.get("HTML Body") or "").strip()
     sent_ok = send_email(email, first_name, subject, body)
 
-    time.sleep(2)
+    time.sleep(0.2)
     now_str = datetime.now(UK_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
     if sent_ok:
@@ -285,20 +285,18 @@ def run_campaign():
             if batch_updates:
                 leads_sheet.batch_update(batch_updates)
                 print(f"📝 Updated {len(batch_updates)} cells.", flush=True)
-
-        half = len(results) // 2
-        print("💾 Writing first half...", flush=True)
-        write_to_sheet(results[:half])
-        print("💾 Writing second half...", flush=True)
-        write_to_sheet(results[half:])
-
-        print("🔄 Running unsubscribe check before 30-minute wait...", flush=True)
+            
+        write_to_sheet(results)
+        print("🔄 Running unsubscribe check before 5 sec wait...", flush=True)
         unsub_set_after_batch = fetch_unsubscribed()
         if unsub_set_after_batch:
            mark_unsubscribed_in_sheet(unsub_set_after_batch)
 
-        print("✅ Batch complete. Sleeping 30 minutes before next batch...", flush=True)
-        time.sleep(1800)
+
+        print("🔄 Quick cool-down before next batch...", flush=True)
+
+        print("✅ Batch complete. Sleeping 5 seconds before next batch...", flush=True)
+        time.sleep(5)
 
     print("🎉 All batches completed.", flush=True)
     is_sending = False
