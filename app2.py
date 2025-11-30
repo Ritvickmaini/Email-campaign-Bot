@@ -11,6 +11,15 @@ from email.utils import formataddr
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import urllib.parse
+import threading
+
+def heartbeat():
+    while True:
+        print("❤️ Heartbeat: worker alive...", flush=True)
+        time.sleep(10)
+
+# Start heartbeat thread
+threading.Thread(target=heartbeat, daemon=True).start()
 
 # === CONFIGURATION ===
 SERVICE_ACCOUNT_FILE = "/etc/secrets/credentials.json"
@@ -29,8 +38,8 @@ TRACKING_BASE = "https://tracking-enfw.onrender.com"
 UNSUBSCRIBE_BASE = "https://unsubscribe-uofn.onrender.com"
 
 MAX_WORKERS = 15
-BATCH_SIZE = 10000
-SHEET_WRITE_SPLIT = 5000
+BATCH_SIZE = 1000
+SHEET_WRITE_SPLIT = 500
 UK_TZ = ZoneInfo("Europe/London")
 
 # ✅ Toggle UK time restriction ON/OFF
@@ -242,7 +251,7 @@ def send_to_lead(row, i, templates_data, unsubscribed_set):
         return (i, "Not Delivered", now_str, str(next_num), f"❌ Failed {email}")
 
 def send_batch(leads_batch, start_index, templates_data, unsubscribed_set):
-    """Send a single 10k batch"""
+    """Send a single 1k batch"""
     results = []
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = [
@@ -267,6 +276,8 @@ def run_campaign():
     print(f"🧩 Templates: {len(templates_data)} | Leads: {total}", flush=True)
 
     for batch_start in range(0, total, BATCH_SIZE):
+        print("❤️ Heartbeat inside campaign loop...", flush=True)
+        print("⏳ Still working... starting batch", flush=True)
         batch_end = min(batch_start + BATCH_SIZE, total)
         leads_batch = leads_data[batch_start:batch_end]
         print(f"\n📦 Sending batch {batch_start+1}-{batch_end} ({len(leads_batch)} leads)...", flush=True)
