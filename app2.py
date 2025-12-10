@@ -12,13 +12,13 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import urllib.parse
 import threading
-import os
 
 def heartbeat():
     while True:
         print("❤️ Heartbeat: worker alive...", flush=True)
         time.sleep(10)
 
+# Start heartbeat thread
 threading.Thread(target=heartbeat, daemon=True).start()
 
 # === CONFIGURATION ===
@@ -42,7 +42,8 @@ BATCH_SIZE = 1000
 SHEET_WRITE_SPLIT = 500
 UK_TZ = ZoneInfo("Europe/London")
 
-USE_UK_TIME_WINDOW = False
+# ✅ Toggle UK time restriction ON/OFF
+USE_UK_TIME_WINDOW = False  # True = Only run 8:00–9:00 UK | False = Run anytime once/day
 
 # === GOOGLE SHEETS SETUP ===
 creds = Credentials.from_service_account_file(
@@ -53,40 +54,13 @@ gc = gspread.authorize(creds)
 leads_sheet = gc.open_by_key(SHEET_ID).worksheet(LEADS_TAB)
 templates_sheet = gc.open_by_key(SHEET_ID).worksheet(TEMPLATES_TAB)
 
-# === GLOBAL FLAGS ===
-is_sending = False
+# === GLOBAL FLAG ===
+is_sending = False  # ensures unsubscribe check pauses while sending
 last_unsub_write = 0
 
-# ====== SEND ORDER TOGGLE STORAGE ======
-ORDER_FLAG_FILE = "/tmp/campaign_order_flag.txt"
-
-def get_send_order_flag():
-    """Reads stored order flag. Default = 'normal' (top→bottom)."""
-    try:
-        if os.path.exists(ORDER_FLAG_FILE):
-            with open(ORDER_FLAG_FILE, "r") as f:
-                flag = f.read().strip()
-                if flag in ("normal", "reverse"):
-                    return flag
-    except:
-        pass
-    return "reverse"
-
-def toggle_send_order_flag():
-    """Flip between 'normal' and 'reverse'."""
-    current = get_send_order_flag()
-    new_flag = "reverse" if current == "normal" else "normal"
-    try:
-        with open(ORDER_FLAG_FILE, "w") as f:
-            f.write(new_flag)
-        print(f"🔁 Next campaign order will be: {new_flag}", flush=True)
-    except Exception as e:
-        print(f"⚠️ Could not update order flag: {e}", flush=True)
-    return new_flag
-
-# ===================================================
-
+# === UTILS ===
 def fetch_unsubscribed():
+    """Fetch unsubscribed list from API"""
     try:
         res = requests.get(UNSUBSCRIBE_API, timeout=10)
         res.raise_for_status()
@@ -97,7 +71,13 @@ def fetch_unsubscribed():
         print(f"❌ Failed to fetch unsubscribed list: {e}", flush=True)
         return set()
 
+PUBLIC_DOMAINS = {
+    "gmail.com", "googlemail.com", "yahoo.com", "outlook.com",
+    "hotmail.com", "live.com", "msn.com", "icloud.com", "me.com",
+    "aol.com", "proton.me", "zoho.com", "gmx.com", "ymail.com"
+}
 def mark_unsubscribed_in_sheet(unsubscribed_set):
+    """Mark ONLY exact unsubscribed emails. Bot logic removed completely."""
     try:
         global last_unsub_write
         now = time.time()
@@ -108,50 +88,57 @@ def mark_unsubscribed_in_sheet(unsubscribed_set):
 
         last_unsub_write = now
 
+        # Load sheet
         all_rows = leads_sheet.get_all_values()
         headers = all_rows[0]
 
         if "Email" not in headers:
-            print("⚠️ 'Email' column missing.")
+            print("⚠️ 'Email' column not found in sheet headers.")
             return
 
         email_idx = headers.index("Email") + 1
 
         updates = []
-        count = 0
+        marked_exact = 0
 
+        # Scan sheet rows
         for i, row in enumerate(all_rows[1:], start=2):
             sheet_email = (row[email_idx - 1] or "").strip().lower()
-            if sheet_email in unsubscribed_set:
-                updates.append({"range": f"C{i}", "values": [["Unsubscribed"]]})
-                count += 1
 
+            if sheet_email and sheet_email in unsubscribed_set:
+                updates.append({"range": f"C{i}", "values": [["Unsubscribed"]]})
+                marked_exact += 1
+
+        # Write results
         if updates:
             leads_sheet.batch_update(updates)
-            print(f"🚫 Marked {count} unsubscribes.", flush=True)
+            print(f"🚫 Marked {marked_exact} exact unsubscribes.", flush=True)
         else:
-            print("✅ No new unsubscribes.", flush=True)
+            print("✅ No new unsubscribes found.", flush=True)
 
     except Exception as e:
-        print(f"❌ Failed unsub write: {e}", flush=True)
-
-# ============================ EMAIL SEND ============================
+        print(f"❌ Failed to process unsubscribes: {e}", flush=True)
 
 def save_to_sent_folder(raw_msg):
+    """Save sent email to the correct IMAP Sent folder (INBOX.Sent)"""
     try:
         with imaplib.IMAP4_SSL(IMAP_SERVER, 993) as imap:
             imap.login(SENDER_EMAIL, SENDER_PASSWORD)
+            sent_folder = "INBOX.Sent"
             imap.append(
-                "INBOX.Sent",
+                sent_folder,
                 "",
                 imaplib.Time2Internaldate(time.time()),
                 raw_msg.encode("utf-8")
             )
+            print(f"📥 Successfully saved email in '{sent_folder}' folder.", flush=True)
             imap.logout()
     except Exception as e:
         print(f"⚠️ IMAP save failed: {e}", flush=True)
 
+
 def send_email(recipient, first_name, subject, html_body):
+    """Send personalized email and save to Sent folder"""
     msg = MIMEMultipart("alternative")
     msg["From"] = formataddr(("Mike Randell", SENDER_EMAIL))
     msg["To"] = recipient
@@ -164,168 +151,216 @@ def send_email(recipient, first_name, subject, html_body):
     )
 
     tracking_link = f"{TRACKING_BASE}/track/click?email={encoded_email}&url={encoded_event_url}&subject={encoded_subject}"
-    tracking_pixel = f'<img src="{TRACKING_BASE}/track/open?email={encoded_email}&subject={encoded_subject}" width="1" height="1"/>'
+    tracking_pixel = f'<img src="{TRACKING_BASE}/track/open?email={encoded_email}&subject={encoded_subject}" width="1" height="1" style="display:block;margin:0 auto;" alt="." />'
     unsubscribe_link = f"{UNSUBSCRIBE_BASE}/unsubscribe?email={encoded_email}"
 
-    first_name = first_name or "there"
+    first_name = (first_name or "").strip() or "there"
     html_body = html_body.replace("{%name%}", first_name)
 
+    cta_button = f"""
+    <div style="text-align:left;margin:30px 0;">
+        <a href="{tracking_link}" 
+           style="background-color:#d93025;color:white;padding:12px 28px;
+                  text-decoration:none;border-radius:6px;display:inline-block;
+                  font-weight:bold;font-size:16px;">
+            🎟️ Book Your Visitor Ticket
+        </a>
+    </div>"""
+
+    signature_block = """
+    <br><br>
+    <div style="color:#000;font-weight:bold;">
+        Best regards,<br>
+        <strong>Mike Randell</strong><br>
+        Marketing Executive | B2B Growth Expo<br>
+        <a href="mailto:mike@southamptonbusinessexpo.com" style="color:#000;text-decoration:none;">mike@southamptonbusinessexpo.com</a><br>
+        (+44) 2034517166
+    </div>"""
+
+    unsubscribe_section = f"""
+    <hr style="margin-top:30px;border:0;border-top:1px solid #ccc;">
+    <div style="text-align:center;margin-top:10px;">
+        <a href="{unsubscribe_link}" style="color:#d93025;text-decoration:none;font-size:12px;">Unsubscribe</a>
+    </div>"""
+
     email_html = f"""
-    <html><body>
-        <p>Hi {first_name},</p>
-        <p>{html_body}</p>
-        <a href="{tracking_link}">Book your ticket</a>
-        <hr>
-        <a href="{unsubscribe_link}">Unsubscribe</a>
-        {tracking_pixel}
-    </body></html>
-    """
+    <html><body style="font-family: Arial, sans-serif; color: #333; line-height:1.6;">
+        <div style="max-width:600px;margin:auto;border:1px solid #ddd;border-radius:8px;padding:20px;">
+          <p>Hi {first_name},</p>
+          <p>{html_body}</p>
+          {cta_button}
+          {signature_block}
+          {unsubscribe_section}
+          {tracking_pixel}
+        </div>
+    </body></html>"""
 
     msg.attach(MIMEText(email_html, "html"))
-    raw = msg.as_string()
+    raw_msg = msg.as_string()
 
     try:
         with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
             server.starttls()
             server.login(SENDER_EMAIL, SENDER_PASSWORD)
-            server.sendmail(SENDER_EMAIL, recipient, raw)
-        save_to_sent_folder(raw)
+            server.sendmail(SENDER_EMAIL, recipient, raw_msg)
+        print(f"✅ Sent: {recipient}", flush=True)
+        save_to_sent_folder(raw_msg)
         return True
-    except:
+    except Exception as e:
+        print(f"❌ Failed {recipient}: {e}", flush=True)
         return False
 
-# ============================ SEND LOGIC ============================
 
-def send_to_lead(row, row_index, templates, unsub_set):
-    email = (row.get("Email") or "").strip().lower()
-    first = row.get("First_Name", "")
-    status = row.get("Status", "").lower()
+def send_to_lead(row, i, templates_data, unsubscribed_set):
+    """Send one email in sequence"""
+    row_lower = {k.strip().lower(): v for k, v in row.items()}
+    email = str(row_lower.get("email") or "").strip().lower()
+    first_name = str(row_lower.get("first_name") or "").strip()
+    status = str(row_lower.get("status") or "").strip()
 
-    if not email or status == "unsubscribed":
-        return (row_index, None, None, None, "")
+    raw_count = row_lower.get("followup_count")
+    try:
+        if raw_count is None:
+            count = 0
+        else:
+            raw_count = str(raw_count).strip()
+            count = int(raw_count) if raw_count.isdigit() else 0
+    except:
+        count = 0
 
-    if email in unsub_set:
-        return (row_index, "Unsubscribed", None, None, "")
+    if not email or status.lower() == "unsubscribed":
+        return (i, None, None, None, f"⏭️ Skipped {email}")
+    if email in unsubscribed_set:
+        return (i, "Unsubscribed", None, None, f"🚫 {email} unsubscribed")
 
-    count = int(row.get("Followup_Count") or 0)
     next_num = count + 1
+    template_row = next((t for t in templates_data if str(t.get("Template")) == str(next_num)), None)
+    if not template_row:
+        return (i, None, None, None, f"⚠️ Template {next_num} not found")
 
-    template = next((x for x in templates if str(x.get("Template")) == str(next_num)), None)
-    if not template:
-        return (row_index, None, None, None, "")
+    subject = (template_row.get("Subject Line") or f"Update {next_num}").strip()
+    body = (template_row.get("HTML Body") or "").strip()
+    sent_ok = send_email(email, first_name, subject, body)
 
-    subject = template["Subject Line"]
-    body = template["HTML Body"]
+    time.sleep(0.2)
+    now_str = datetime.now(UK_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
-    sent = send_email(email, first, subject, body)
-    now = datetime.now(UK_TZ).strftime("%Y-%m-%d %H:%M:%S")
-
-    if sent:
-        return (row_index, f"Email Sent - {next_num}", now, next_num, "")
+    if sent_ok:
+        return (i, f"Email Sent - {next_num}", now_str, str(next_num), f"✅ Sent {email}")
     else:
-        return (row_index, "Not Delivered", now, next_num, "")
+        return (i, "Not Delivered", now_str, str(next_num), f"❌ Failed {email}")
 
-
-def send_batch(batch, start_row, templates, unsub_set):
+def send_batch(leads_batch, start_index, templates_data, unsubscribed_set):
+    """Send a single 1k batch"""
     results = []
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = [
-            ex.submit(send_to_lead, row, start_row + idx, templates, unsub_set)
-            for idx, row in enumerate(batch)
+            executor.submit(send_to_lead, row, start_index + i, templates_data, unsubscribed_set)
+            for i, row in enumerate(leads_batch)
         ]
         for f in as_completed(futures):
             results.append(f.result())
     return results
 
-# ============================ CAMPAIGN ============================
 
 def run_campaign():
+    """Send all leads in 10k batches"""
     global is_sending
     is_sending = True
+    print("\n🚀 Running daily email campaign...", flush=True)
+    unsubscribed_set = fetch_unsubscribed()
 
-    print("\n🚀 Running campaign...", flush=True)
+    leads_data = leads_sheet.get_all_records()
+    templates_data = templates_sheet.get_all_records()
+    total = len(leads_data)
+    print(f"🧩 Templates: {len(templates_data)} | Leads: {total}", flush=True)
 
-    unsub_set = fetch_unsubscribed()
-    leads = leads_sheet.get_all_records()
-    templates = templates_sheet.get_all_records()
-
-    total = len(leads)
-    print(f"📊 Leads: {total}", flush=True)
-
-    # ---------- APPLY SEND ORDER ----------
-    order_flag = get_send_order_flag()
-    print(f"📌 Current send order: {order_flag}", flush=True)
-
-    if order_flag == "reverse":
-        print("🔽 Sending from bottom → top", flush=True)
-        leads = list(reversed(leads))
-    else:
-        print("🔼 Sending from top → bottom", flush=True)
-
-    # ---------- PROCESS BATCHES ----------
     for batch_start in range(0, total, BATCH_SIZE):
+        print("❤️ Heartbeat inside campaign loop...", flush=True)
+        print("⏳ Still working... starting batch", flush=True)
         batch_end = min(batch_start + BATCH_SIZE, total)
-        batch = leads[batch_start:batch_end]
+        leads_batch = leads_data[batch_start:batch_end]
+        print(f"\n📦 Sending batch {batch_start+1}-{batch_end} ({len(leads_batch)} leads)...", flush=True)
 
-        print(f"\n📦 Batch {batch_start+1}-{batch_end}", flush=True)
+        results = send_batch(leads_batch, batch_start + 2, templates_data, unsubscribed_set)
 
-        # Real sheet row index depends on reversed order handling:
-        if order_flag == "reverse":
-            start_row = 2 + (total - batch_end)
-        else:
-            start_row = 2 + batch_start
+        def write_to_sheet(result_half):
+            batch_updates = []
+            for (row_i, status, timestamp, count, log) in result_half:
+                if status:
+                    batch_updates.append({"range": f"C{row_i}", "values": [[status]]})
+                    if timestamp:
+                        batch_updates.append({"range": f"D{row_i}", "values": [[timestamp]]})
+                    if count:
+                        batch_updates.append({"range": f"E{row_i}", "values": [[count]]})
+            if batch_updates:
+                leads_sheet.batch_update(batch_updates)
+                print(f"📝 Updated {len(batch_updates)} cells.", flush=True)
+            
+        write_to_sheet(results)
+        print("🔄 Running unsubscribe check before 5 sec wait...", flush=True)
+        unsub_set_after_batch = fetch_unsubscribed()
+        if unsub_set_after_batch:
+           mark_unsubscribed_in_sheet(unsub_set_after_batch)
 
-        results = send_batch(batch, start_row, templates, unsub_set)
 
-        updates = []
-        for row_i, status, timestamp, count, _ in results:
-            if status:
-                updates.append({"range": f"C{row_i}", "values": [[status]]})
-            if timestamp:
-                updates.append({"range": f"D{row_i}", "values": [[timestamp]]})
-            if count:
-                updates.append({"range": f"E{row_i}", "values": [[count]]})
+        print("🔄 Quick cool-down before next batch...", flush=True)
 
-        if updates:
-            leads_sheet.batch_update(updates)
-            print(f"📝 Updated {len(updates)} cells", flush=True)
+        print("✅ Batch complete. Sleeping 5 seconds before next batch...", flush=True)
+        time.sleep(5)
 
-        time.sleep(3)
-
-    print("🎉 Campaign finished.", flush=True)
-
-    # After finishing: flip order for next time
-    toggle_send_order_flag()
-
+    print("🎉 All batches completed.", flush=True)
     is_sending = False
 
 
-# ============================ SCHEDULER ============================
-
 def scheduler_loop():
-    last_sent = None
+    """Main scheduler loop"""
+    global is_sending
+    last_sent_date = None
     last_unsub_check = datetime.now(UK_TZ) - timedelta(hours=2)
 
+    print("🕒 Scheduler started (checks every 10 min)...", flush=True)
+
     while True:
-        now = datetime.now(UK_TZ)
-        today = now.strftime("%Y-%m-%d")
+        try:
+            now_uk = datetime.now(UK_TZ)
+            today_str = now_uk.strftime("%Y-%m-%d")
 
-        if (now - last_unsub_check).total_seconds() >= 900:
-            unsub = fetch_unsubscribed()
-            if unsub:
-                mark_unsubscribed_in_sheet(unsub)
-            last_unsub_check = now
+            # Every 15 min unsubscribe check
+            if not is_sending and (now_uk - last_unsub_check).total_seconds() >= 900:
+                unsubscribed_set = fetch_unsubscribed()
+                if unsubscribed_set:
+                    mark_unsubscribed_in_sheet(unsubscribed_set)
+                last_unsub_check = now_uk
 
-        should_run = True
+            # UK time window (11:00–12:00 UK)
+            campaign_start = now_uk.replace(hour=8, minute=0, second=0, microsecond=0)
+            campaign_end = now_uk.replace(hour=9, minute=0, second=0, microsecond=0)
 
-        if should_run and last_sent != today:
-            run_campaign()
-            last_sent = today
-        else:
-            print(f"⏳ Waiting... {now.strftime('%H:%M:%S')}", flush=True)
+            should_run = False
+            if USE_UK_TIME_WINDOW:
+                if campaign_start <= now_uk < campaign_end:
+                    should_run = True
+            else:
+                should_run = True  # no restriction
 
-        time.sleep(600)
+            if last_sent_date != today_str and should_run:
+                if USE_UK_TIME_WINDOW:
+                    print(f"⏰ UK time window matched ({now_uk.strftime('%H:%M')} UK) — starting campaign.", flush=True)
+                else:
+                    print(f"🚀 UK time window OFF — starting campaign immediately.", flush=True)
+                run_campaign()
+                last_sent_date = today_str
+            else:
+                print(f"🕓 Current time: {now_uk.strftime('%H:%M')} UK — waiting...", flush=True)
 
-# ===== ENTRY POINT =====
+            time.sleep(600)
+
+        except Exception as e:
+            print(f"⚠️ Scheduler error: {e}", flush=True)
+            time.sleep(600)
+
+
+# === ENTRY POINT ===
 if __name__ == "__main__":
     scheduler_loop()
