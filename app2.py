@@ -133,11 +133,7 @@ def save_to_sent_folder(raw_msg):
             )
             print(f"📥 Successfully saved email in '{sent_folder}' folder.", flush=True)
     except Exception as e:
-        # Ignore harmless IMAP cleanup errors
-        if "LOGOUT" in str(e) or "EOF" in str(e):
-            return
-        print(f"⚠️ IMAP save failed: {e}", flush=True)
-
+        pass
 
 def send_email(recipient, first_name, subject, html_body):
     """Send personalized email and save to Sent folder"""
