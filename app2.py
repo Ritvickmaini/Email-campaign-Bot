@@ -37,7 +37,7 @@ UNSUBSCRIBE_API = "https://unsubscribe-uofn.onrender.com/get_unsubscribes"
 TRACKING_BASE = "https://tracking-enfw.onrender.com"
 UNSUBSCRIBE_BASE = "https://unsubscribe-uofn.onrender.com"
 
-MAX_WORKERS = 15
+MAX_WORKERS = 4
 BATCH_SIZE = 1000
 SHEET_WRITE_SPLIT = 500
 UK_TZ = ZoneInfo("Europe/London")
@@ -199,7 +199,7 @@ def send_email(recipient, first_name, subject, html_body):
     raw_msg = msg.as_string()
 
     try:
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=90) as server:
             server.starttls()
             server.login(SENDER_EMAIL, SENDER_PASSWORD)
             server.sendmail(SENDER_EMAIL, recipient, raw_msg)
@@ -242,7 +242,7 @@ def send_to_lead(row, i, templates_data, unsubscribed_set):
     body = (template_row.get("HTML Body") or "").strip()
     sent_ok = send_email(email, first_name, subject, body)
 
-    time.sleep(0.2)
+    time.sleep(1.2)
     now_str = datetime.now(UK_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
     if sent_ok:
