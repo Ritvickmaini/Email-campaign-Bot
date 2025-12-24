@@ -132,7 +132,6 @@ def save_to_sent_folder(raw_msg):
                 raw_msg.encode("utf-8")
             )
             print(f"📥 Successfully saved email in '{sent_folder}' folder.", flush=True)
-            imap.logout()
     except Exception as e:
         print(f"⚠️ IMAP save failed: {e}", flush=True)
 
