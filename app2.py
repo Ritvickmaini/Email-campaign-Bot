@@ -31,7 +31,7 @@ SMTP_SERVER = "mail.southamptonbusinessexpo.com"
 SMTP_PORT = 587
 IMAP_SERVER = "mail.southamptonbusinessexpo.com"
 SENDER_EMAIL = "mike@southamptonbusinessexpo.com"
-SENDER_PASSWORD = "Geecon0404"
+SENDER_PASSWORD = "bi,dEd4qir.p"
 
 UNSUBSCRIBE_API = "https://unsubscribe-uofn.onrender.com/get_unsubscribes"
 TRACKING_BASE = "https://tracking-enfw.onrender.com"
