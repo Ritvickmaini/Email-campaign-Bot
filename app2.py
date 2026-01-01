@@ -145,7 +145,7 @@ def send_email(recipient, first_name, subject, html_body):
     encoded_email = urllib.parse.quote_plus(recipient)
     encoded_subject = urllib.parse.quote_plus(subject)
     encoded_event_url = urllib.parse.quote_plus(
-        "https://SouthamptonBusinessShow29Jan26.eventbrite.co.uk/?aff=EMAILCAMPAIGNS"
+        "https://SOXPO26.eventbrite.co.uk/?aff=EMAILCAMPAIGNS"
     )
 
     tracking_link = f"{TRACKING_BASE}/track/click?email={encoded_email}&url={encoded_event_url}&subject={encoded_subject}"
