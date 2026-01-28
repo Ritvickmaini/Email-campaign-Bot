@@ -155,25 +155,6 @@ def send_email(recipient, first_name, subject, html_body):
     first_name = (first_name or "").strip() or "there"
     html_body = html_body.replace("{%name%}", first_name)
 
-    cta_button = f"""
-    <div style="text-align:left;margin:30px 0;">
-        <a href="{tracking_link}" 
-           style="background-color:#d93025;color:white;padding:12px 28px;
-                  text-decoration:none;border-radius:6px;display:inline-block;
-                  font-weight:bold;font-size:16px;">
-            🎟️ Book Your Visitor Ticket
-        </a>
-    </div>"""
-
-    signature_block = """
-    <br><br>
-    <div style="color:#000;font-weight:bold;">
-        Best regards,<br>
-        <strong>Mike Randell</strong><br>
-        Marketing Executive | B2B Growth Expo<br>
-        <a href="mailto:mike@southamptonbusinessexpo.com" style="color:#000;text-decoration:none;">mike@southamptonbusinessexpo.com</a><br>
-    </div>"""
-
     unsubscribe_section = f"""
     <hr style="margin-top:30px;border:0;border-top:1px solid #ccc;">
     <div style="text-align:center;margin-top:10px;">
@@ -185,8 +166,7 @@ def send_email(recipient, first_name, subject, html_body):
         <div style="max-width:600px;margin:auto;border:1px solid #ddd;border-radius:8px;padding:20px;">
           <p>Hi {first_name},</p>
           <p>{html_body}</p>
-          {cta_button}
-          {signature_block}
+          
           {unsubscribe_section}
           {tracking_pixel}
         </div>
